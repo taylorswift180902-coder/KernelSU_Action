@@ -130,7 +130,7 @@ jobs:
       - name: Harden config for runner limits
         run: |
           echo "##################################################"
-          echo "WORKFLOW_REV: v4-inline-macro-patch"
+          echo "WORKFLOW_REV: v6-fix-VFF_4G_SUPPORT"
           echo "##################################################"
           # runner 只有 7GB RAM / 14GB 磁盘，MTK 全量树按默认配置必然爆。
           # 在这里直接改，避免还要单独上传 config.env。
@@ -202,6 +202,8 @@ jobs:
             arch/arm64/configs/gki_defconfig \
             arch/arm64/configs/vendor/xiaomi_mt6983.config \
             arch/arm64/configs/vendor/matisse.config
+          # 该驱动引用了树里未定义的 VFF_AG_SUPPORT，且手机日常用不到（仅调试串口）
+          echo '# CONFIG_MTK_UART_APDMA is not set' >> arch/arm64/configs/vendor/matisse_gki_defconfig
           echo "merged defconfig: $(wc -l < arch/arm64/configs/vendor/matisse_gki_defconfig) lines"
           # build.sh 用 O=out 做树外编译，源码树里残留 .config / include/generated
           # 会被判定为 "source tree is not clean" 而直接失败，必须清干净。
@@ -239,22 +241,21 @@ jobs:
       - name: Build kernel
         run: |
           set -o pipefail
-          cd "$WORKSPACE/android-kernel"
+          echo ">>> WORKSPACE=$WORKSPACE"
+          cd "$WORKSPACE/android-kernel" || { echo ">>> 致命: cd 失败"; exit 1; }
+          echo ">>> PWD=$(pwd)"
           F=drivers/dma/mediatek/mtk-uart-apdma.c
-          echo ">>> 宏补丁检查: $F"
-          if [ -f "$F" ]; then
-            if head -5 "$F" | grep -q 'define VFF_AG_SUPPORT'; then
-              echo ">>> 已在前 5 行定义，跳过"
-            else
-              { printf '#ifndef VFF_AG_SUPPORT\n#define VFF_AG_SUPPORT 0\n#endif\n'; cat "$F"; } > "$F.tmp"
-              mv "$F.tmp" "$F"
-              echo ">>> PATCHED: 已注入 VFF_AG_SUPPORT 定义"
-            fi
-            echo ">>> 文件前 6 行:"
-            head -6 "$F"
-          else
-            echo ">>> 警告: 文件不存在，跳过补丁"
-          fi
+          ls -l "$F" || { echo ">>> 致命: 文件不存在 $(pwd)/$F"; exit 1; }
+          # 上游 2025-11 已把 VFF_4G_SUPPORT 正式改名为 VFF_ADDR2（同一寄存器 0x54）。
+          # 本树只改了一半：定义了 VFF_ADDR2，代码里还残留 3 处旧名。
+          echo ">>> 替换前 VFF_4G_SUPPORT: $(grep -c VFF_4G_SUPPORT "$F" || true)"
+          sed -i 's/VFF_4G_SUPPORT_CLR_B/0/g' "$F"
+          sed -i 's/VFF_4G_SUPPORT/VFF_ADDR2/g' "$F"
+          LEFT=$(grep -c VFF_4G_SUPPORT "$F" || true)
+          echo ">>> 替换后残留: $LEFT"
+          if [ "$LEFT" != "0" ]; then echo ">>> 致命: 替换失败"; exit 1; fi
+          echo ">>> 改后的三处:"
+          grep -n 'VFF_ADDR2' "$F"
           cd "$GITHUB_WORKSPACE"
           bash scripts/build.sh all 2>&1 | tee "$RUNNER_TEMP/build_full.log"
 
