@@ -188,6 +188,13 @@ jobs:
             arch/arm64/configs/vendor/xiaomi_mt6983.config \
             arch/arm64/configs/vendor/matisse.config
           echo "merged defconfig: $(wc -l < arch/arm64/configs/vendor/matisse_gki_defconfig) lines"
+          # build.sh 用 O=out 做树外编译，源码树里残留 .config / include/generated
+          # 会被判定为 "source tree is not clean" 而直接失败，必须清干净。
+          # mrproper 不会删除 arch/arm64/configs/ 下我们自己生成的 defconfig。
+          make -s mrproper
+          test -f arch/arm64/configs/vendor/matisse_gki_defconfig \
+            && echo "defconfig survived mrproper"
+          test ! -f .config && echo "source tree is clean"
 
       - name: Install KernelSU
         if: env.KSU_VARIANT != 'none'
