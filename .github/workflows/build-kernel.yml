@@ -171,6 +171,18 @@ jobs:
       - name: Fetch kernel source
         run: bash scripts/source.sh
 
+      - name: Generate matisse defconfig
+        run: |
+          set -euo pipefail
+          cd "$WORKSPACE/android-kernel"
+          export ARCH=arm64
+          make -s CC=clang gki_defconfig
+          scripts/kconfig/merge_config.sh -m -r .config \
+            arch/arm64/configs/vendor/xiaomi_mt6983.config \
+            arch/arm64/configs/vendor/matisse.config
+          cp .config arch/arm64/configs/vendor/matisse_gki_defconfig
+          echo "merged defconfig: $(wc -l < arch/arm64/configs/vendor/matisse_gki_defconfig) lines"
+
       - name: Install KernelSU
         if: env.KSU_VARIANT != 'none'
         run: bash scripts/kernelsu.sh
