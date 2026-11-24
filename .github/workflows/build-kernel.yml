@@ -175,12 +175,18 @@ jobs:
         run: |
           set -euo pipefail
           cd "$WORKSPACE/android-kernel"
+          export PATH="$WORKSPACE/clang/bin:$PATH"
           export ARCH=arm64
-          make -s CC=clang gki_defconfig
-          scripts/kconfig/merge_config.sh -m -r .config \
+          echo "clang: $(command -v clang)"
+          clang --version | head -1
+          # 先跑一次 gki_defconfig，把 scripts/kconfig 的 host 工具编出来
+          make -s gki_defconfig
+          # 照抄 build.config.xiaomi.common 的 PRE_DEFCONFIG_CMDS
+          KCONFIG_CONFIG=arch/arm64/configs/vendor/matisse_gki_defconfig \
+          scripts/kconfig/merge_config.sh -m -r \
+            arch/arm64/configs/gki_defconfig \
             arch/arm64/configs/vendor/xiaomi_mt6983.config \
             arch/arm64/configs/vendor/matisse.config
-          cp .config arch/arm64/configs/vendor/matisse_gki_defconfig
           echo "merged defconfig: $(wc -l < arch/arm64/configs/vendor/matisse_gki_defconfig) lines"
 
       - name: Install KernelSU
