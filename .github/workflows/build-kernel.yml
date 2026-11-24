@@ -129,6 +129,9 @@ jobs:
 
       - name: Harden config for runner limits
         run: |
+          echo "##################################################"
+          echo "WORKFLOW_REV: v3-matisse-macro-patch"
+          echo "##################################################"
           # runner 只有 7GB RAM / 14GB 磁盘，MTK 全量树按默认配置必然爆。
           # 在这里直接改，避免还要单独上传 config.env。
           sed -i 's/^ENABLE_CCACHE=.*/ENABLE_CCACHE=false/' config.env
@@ -227,8 +230,9 @@ jobs:
           if grep -q 'VFF_AG_SUPPORT' "$F" && ! grep -q '#define VFF_AG_SUPPORT' "$F"; then
             # 这棵树漏提交了定义 VFF_AG_SUPPORT 的头文件（WIP 分支，作者自己没编过）
             # 源码里它是当运行时开关传给 write 函数，补 0 等于关闭该特性
-            sed -i '1i #ifndef VFF_AG_SUPPORT\n#define VFF_AG_SUPPORT 0\n#endif' "$F"
-            echo "patched: $F"
+            { printf '#ifndef VFF_AG_SUPPORT\n#define VFF_AG_SUPPORT 0\n#endif\n'; cat "$F"; } > "$F.tmp"
+            mv "$F.tmp" "$F"
+            echo "PATCHED: $F"
           else
             echo "no patch needed"
           fi
