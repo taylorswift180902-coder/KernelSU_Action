@@ -130,7 +130,7 @@ jobs:
       - name: Harden config for runner limits
         run: |
           echo "##################################################"
-          echo "WORKFLOW_REV: v11-nuke-Werror-and-speedup"
+          echo "WORKFLOW_REV: v15-no-trim-ksyms"
           echo "##################################################"
           # runner 只有 7GB RAM / 14GB 磁盘，MTK 全量树按默认配置必然爆。
           # 在这里直接改，避免还要单独上传 config.env。
@@ -139,6 +139,11 @@ jobs:
           echo 'ENABLE_CCACHE=false' >> config.env
           sed -i '/^EXTRA_DEFCONFIG=/d' config.env
           echo 'EXTRA_DEFCONFIG=CONFIG_WERROR=n' >> config.env
+          # 原厂 .config 含 CONFIG_LTO_CLANG_FULL=y 与 CONFIG_CFI_CLANG=y。
+          # CFI 依赖 LTO，关掉 LTO 会连带关掉 CFI，导致 __cfi_slowpath 符号消失，
+          # 225 个 vendor 模块中有 115 个依赖该符号。必须保持 LTO 开启。
+          sed -i '/^DISABLE_LTO=/d' config.env
+          echo 'DISABLE_LTO=false' >> config.env
           echo "--- 生效配置 ---"
           grep -E '^(ENABLE_CCACHE|EXTRA_DEFCONFIG|DISABLE_LTO|KSU_VARIANT|DISABLE_CC_WERROR)=' config.env || true
 
@@ -161,7 +166,7 @@ jobs:
         run: |
           # LTO links are memory-hungry and the runner has 16GB; a swap file is
           # cheaper and more predictable than an unpinned third-party action.
-          sudo fallocate -l 8G /mnt/swapfile
+          sudo fallocate -l 12G /mnt/swapfile
           sudo chmod 600 /mnt/swapfile
           sudo mkswap /mnt/swapfile
           sudo swapon /mnt/swapfile
@@ -206,6 +211,20 @@ jobs:
           echo '# CONFIG_MTK_UART_APDMA is not set' >> arch/arm64/configs/vendor/matisse_gki_defconfig
           echo '# CONFIG_WERROR is not set' >> arch/arm64/configs/vendor/matisse_gki_defconfig
           echo 'CONFIG_FRAME_WARN=0' >> arch/arm64/configs/vendor/matisse_gki_defconfig
+          # 原厂 CONFIG_TRIM_UNUSED_KSYMS=y，但那是伴随 vendor 模块一起构建时的行为。
+          # 我们把所有 =m 关掉后内核不编任何模块，TRIM 会把全部 EXPORT_SYMBOL
+          # 判定为"未被引用"并整体裁掉，导致 225 个 vendor 模块加载时 unknown symbol。
+          # 必须关闭，让导出符号完整保留。
+          echo '# CONFIG_TRIM_UNUSED_KSYMS is not set' >> arch/arm64/configs/vendor/matisse_gki_defconfig
+          # 原厂 /proc/config.gz 里 =m 数量为 0：内核 Image 只含 built-in，
+          # 225 个 vendor 模块由另一套配置单独编译、已存在于 vendor_dlkm。
+          # 本树 matisse.config 把 panel/触摸/音频/指纹都标成 =m，编它们纯属浪费
+          # （Full LTO 下尤其致命），全部关成 not set。CONFIG_MODULES 本身保持 =y。
+          BEFORE_M=$(grep -c '=m$' arch/arm64/configs/vendor/matisse_gki_defconfig || true)
+          sed -i -E 's/^(CONFIG_[A-Za-z0-9_]+)=m$/\# \1 is not set/' arch/arm64/configs/vendor/matisse_gki_defconfig
+          AFTER_M=$(grep -c '=m$' arch/arm64/configs/vendor/matisse_gki_defconfig || true)
+          echo "modules: =m $BEFORE_M -> $AFTER_M"
+          grep -c 'is not set' arch/arm64/configs/vendor/matisse_gki_defconfig || true
           echo "merged defconfig: $(wc -l < arch/arm64/configs/vendor/matisse_gki_defconfig) lines"
           # build.sh 用 O=out 做树外编译，源码树里残留 .config / include/generated
           # 会被判定为 "source tree is not clean" 而直接失败，必须清干净。
@@ -260,12 +279,17 @@ jobs:
           grep -n 'VFF_ADDR2' "$F"
           # Kbuild 的 KBUILD_CFLAGS += -Werror 追加在 KCFLAGS 之后，
           # 会把传进去的 -Wno-error 覆盖掉，只能在 Makefile 层面摘掉。
-          echo ">>> 移除顶层 -Werror:"
-          grep -n 'Werror' Makefile | head -10
-          # 宽匹配：-Werror 后面跟空格或行尾才删，避免破坏 -Werror=xxx 这类带参形式
-          sed -i -e 's/-Werror / /g' -e 's/-Werror$//' Makefile
-          echo ">>> 移除后残留:"
-          grep -n 'Werror' Makefile | head -10 || echo "(none)"
+          echo ">>> 顶层 Makefile 里的 Werror 行:"
+          grep -nE '\-Werror' Makefile | head -12
+          # 全部替换成 -Wno-error。
+          # 第 1040 行是 $(call cc-option,-Werror,-Wincompatible-pointer-types)，
+          # 展开后是全局 -Werror，且后面跟的是逗号，之前的宽匹配漏掉了它。
+          # -Wno-error 覆盖全局，-Wno-error=xxx 覆盖单项，语义都对。
+          sed -i 's/-Werror/-Wno-error/g' Makefile
+          echo ">>> 替换后仍含 -Werror 的行（应为空）:"
+          grep -nE '(^|[^-])-Werror' Makefile | head -5 || echo "(none)"
+          echo ">>> 确认 -Wno-error 已就位:"
+          grep -c -- '-Wno-error' Makefile || true
           # 兜底：直接修源码里的空参数函数（() -> (void)）
           # 文件名用通配符匹配，不靠肉眼读：实际叫 panel-l11-... / panel-l11a-...
           echo ">>> 匹配到的 panel 文件:"
@@ -282,7 +306,7 @@ jobs:
           done
           # ---------- 全局清掉 -Werror ----------
           # 这棵树到处是 MTK 老代码，-Werror 把每个警告都变成中断点。
-          # 只删后面跟空格或行尾的形式，-Werror=xxx 这种带参形式保持原样。
+          # 统一替换成 -Wno-error（-Wno-error 覆盖全局，-Wno-error=xxx 覆盖单项）。
           echo ">>> 扫描含 -Werror 的构建文件"
           FILES=$(timeout 240 grep -rl --include=Makefile --include='*.mk' --include=Kbuild -e '-Werror' \
                     drivers arch scripts block crypto fs ipc kernel lib mm net security sound virt 2>/dev/null || true)
@@ -290,10 +314,10 @@ jobs:
           printf '%s\n' "$FILES" | head -12
           printf '%s\n' "$FILES" | while IFS= read -r f; do
             [ -n "$f" ] || continue
-            sed -i -e 's/-Werror / /g' -e 's/-Werror$//' "$f"
+            sed -i 's/-Werror/-Wno-error/g' "$f"
           done
-          echo ">>> 清理后 Drivers/arch 残留:"
-          grep -rn --include=Makefile --include=Kbuild -e '-Werror ' drivers arch 2>/dev/null | head -5 || echo "(clean)"
+          echo ">>> 清理后残留（应仅剩 -Wno-error）:"
+          grep -rn --include=Makefile --include=Kbuild -E '(^|[^-])-Werror' drivers arch 2>/dev/null | head -5 || echo "(clean)"
           cd "$GITHUB_WORKSPACE"
           bash scripts/build.sh all 2>&1 | tee "$RUNNER_TEMP/build_full.log"
 
