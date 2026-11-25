@@ -130,7 +130,7 @@ jobs:
       - name: Harden config for runner limits
         run: |
           echo "##################################################"
-          echo "WORKFLOW_REV: v7-kill-Werror"
+          echo "WORKFLOW_REV: v8-wide-Werror-and-source-fix"
           echo "##################################################"
           # runner 只有 7GB RAM / 14GB 磁盘，MTK 全量树按默认配置必然爆。
           # 在这里直接改，避免还要单独上传 config.env。
@@ -260,10 +260,20 @@ jobs:
           # Kbuild 的 KBUILD_CFLAGS += -Werror 追加在 KCFLAGS 之后，
           # 会把传进去的 -Wno-error 覆盖掉，只能在 Makefile 层面摘掉。
           echo ">>> 移除顶层 -Werror:"
-          grep -n 'Werror' Makefile | head -5
-          sed -i 's/KBUILD_CFLAGS += -Werror/KBUILD_CFLAGS +=/g' Makefile
-          echo ">>> 移除后:"
-          grep -c 'Werror' Makefile || true
+          grep -n 'Werror' Makefile | head -10
+          # 宽匹配：-Werror 后面跟空格或行尾才删，避免破坏 -Werror=xxx 这类带参形式
+          sed -i -e 's/-Werror / /g' -e 's/-Werror$//' Makefile
+          echo ">>> 移除后残留:"
+          grep -n 'Werror' Makefile | head -10 || echo "(none)"
+          # 兜底：直接修源码，把空参数列表补成 (void)
+          P=drivers/gpu/drm/panel/panel-111-38-0a-0a-dsc-cmd.c
+          if [ -f "$P" ]; then
+            echo ">>> 修 panel 源码 (663行附近):"
+            sed -n '660,665p' "$P"
+            sed -i 's/static bool lcm_is_pm()/static bool lcm_is_pm(void)/' "$P"
+            echo ">>> 改后:"
+            grep -n 'lcm_is_pm' "$P" | head -4
+          fi
           cd "$GITHUB_WORKSPACE"
           bash scripts/build.sh all 2>&1 | tee "$RUNNER_TEMP/build_full.log"
 
