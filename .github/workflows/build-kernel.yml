@@ -130,7 +130,7 @@ jobs:
       - name: Harden config for runner limits
         run: |
           echo "##################################################"
-          echo "WORKFLOW_REV: v16-no-trusted-mem"
+          echo "WORKFLOW_REV: v17-upload-symvers"
           echo "##################################################"
           # runner 只有 7GB RAM / 14GB 磁盘，MTK 全量树按默认配置必然爆。
           # 在这里直接改，避免还要单独上传 config.env。
@@ -345,6 +345,18 @@ jobs:
 
       - name: Package artifacts
         run: bash scripts/package.sh all
+
+      - name: Upload build metadata files
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-meta-${{ env.DEVICE }}-${{ env.BUILD_TIME }}
+          path: |
+            kernel_workspace/android-kernel/out/Module.symvers
+            kernel_workspace/android-kernel/out/System.map
+            kernel_workspace/android-kernel/out/.config
+          if-no-files-found: warn
+          compression-level: 6
 
       - name: Export build metadata
         id: meta
