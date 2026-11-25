@@ -130,7 +130,7 @@ jobs:
       - name: Harden config for runner limits
         run: |
           echo "##################################################"
-          echo "WORKFLOW_REV: v9-panel-glob-regex"
+          echo "WORKFLOW_REV: v10-frame-warn-and-diag"
           echo "##################################################"
           # runner 只有 7GB RAM / 14GB 磁盘，MTK 全量树按默认配置必然爆。
           # 在这里直接改，避免还要单独上传 config.env。
@@ -205,6 +205,7 @@ jobs:
           # 该驱动引用了树里未定义的 VFF_AG_SUPPORT，且手机日常用不到（仅调试串口）
           echo '# CONFIG_MTK_UART_APDMA is not set' >> arch/arm64/configs/vendor/matisse_gki_defconfig
           echo '# CONFIG_WERROR is not set' >> arch/arm64/configs/vendor/matisse_gki_defconfig
+          echo 'CONFIG_FRAME_WARN=0' >> arch/arm64/configs/vendor/matisse_gki_defconfig
           echo "merged defconfig: $(wc -l < arch/arm64/configs/vendor/matisse_gki_defconfig) lines"
           # build.sh 用 O=out 做树外编译，源码树里残留 .config / include/generated
           # 会被判定为 "source tree is not clean" 而直接失败，必须清干净。
@@ -289,6 +290,12 @@ jobs:
           if [ ! -f "$LOG" ]; then echo "no build log captured"; exit 0; fi
           echo "########## 错误摘要 ##########"
           grep -nE "error:|ERROR:|Error [0-9]+|undefined reference|undefined symbol|No space left|No such file|cannot find|Killed|fatal error|internal compiler" "$LOG" | head -60 || echo "(no keyword matched)"
+          echo "########## Makefile 里的 Werror 行 ##########"
+          grep -n 'Werror' "$WORKSPACE/android-kernel/Makefile" | head -10 || echo "(Makefile 里没有 Werror)"
+          echo "########## out/.config 的 WERROR / FRAME_WARN ##########"
+          grep -iE 'CONFIG_WERROR|CONFIG_FRAME_WARN' "$WORKSPACE/android-kernel/out/.config" 2>/dev/null || echo "(读不到 .config)"
+          echo "########## 编译命令行里的 -Werror ##########"
+          grep -o -- '-Werror[^ ]*' "$LOG" | sort | uniq -c | sort -rn | head -10 || echo "(日志里没有 -Werror)"
           echo "########## 末尾 80 行 ##########"
           tail -80 "$LOG"
 
