@@ -130,7 +130,7 @@ jobs:
       - name: Harden config for runner limits
         run: |
           echo "##################################################"
-          echo "WORKFLOW_REV: v8-wide-Werror-and-source-fix"
+          echo "WORKFLOW_REV: v9-panel-glob-regex"
           echo "##################################################"
           # runner 只有 7GB RAM / 14GB 磁盘，MTK 全量树按默认配置必然爆。
           # 在这里直接改，避免还要单独上传 config.env。
@@ -265,15 +265,20 @@ jobs:
           sed -i -e 's/-Werror / /g' -e 's/-Werror$//' Makefile
           echo ">>> 移除后残留:"
           grep -n 'Werror' Makefile | head -10 || echo "(none)"
-          # 兜底：直接修源码，把空参数列表补成 (void)
-          P=drivers/gpu/drm/panel/panel-111-38-0a-0a-dsc-cmd.c
-          if [ -f "$P" ]; then
-            echo ">>> 修 panel 源码 (663行附近):"
-            sed -n '660,665p' "$P"
-            sed -i 's/static bool lcm_is_pm()/static bool lcm_is_pm(void)/' "$P"
-            echo ">>> 改后:"
-            grep -n 'lcm_is_pm' "$P" | head -4
-          fi
+          # 兜底：直接修源码里的空参数函数（() -> (void)）
+          # 文件名用通配符匹配，不靠肉眼读：实际叫 panel-l11-... / panel-l11a-...
+          echo ">>> 匹配到的 panel 文件:"
+          ls -1 drivers/gpu/drm/panel/panel-*11*-38-0a-0a-dsc-cmd.c 2>/dev/null || echo "(none)"
+          for P in drivers/gpu/drm/panel/panel-*11*-38-0a-0a-dsc-cmd.c; do
+            [ -f "$P" ] || continue
+            BEFORE=$(grep -cE '^static [a-zA-Z_][a-zA-Z0-9_]*[[:space:]]+[a-zA-Z_][a-zA-Z0-9_]*\(\)$' "$P" || true)
+            echo ">>> $P 空参数函数数量: $BEFORE"
+            grep -nE '^static [a-zA-Z_][a-zA-Z0-9_]*[[:space:]]+[a-zA-Z_][a-zA-Z0-9_]*\(\)$' "$P" || true
+            sed -i -E 's/^static ([a-zA-Z_][a-zA-Z0-9_]*[[:space:]]+)([a-zA-Z_][a-zA-Z0-9_]*)\(\)$/static \1\2(void)/' "$P"
+            AFTER=$(grep -cE '^static [a-zA-Z_][a-zA-Z0-9_]*[[:space:]]+[a-zA-Z_][a-zA-Z0-9_]*\(\)$' "$P" || true)
+            echo ">>> 修完后剩余: $AFTER"
+            grep -n '(void)' "$P" | head -4 || true
+          done
           cd "$GITHUB_WORKSPACE"
           bash scripts/build.sh all 2>&1 | tee "$RUNNER_TEMP/build_full.log"
 
