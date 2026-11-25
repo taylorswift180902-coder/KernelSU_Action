@@ -130,7 +130,7 @@ jobs:
       - name: Harden config for runner limits
         run: |
           echo "##################################################"
-          echo "WORKFLOW_REV: v18-global-stack-canary"
+          echo "WORKFLOW_REV: v19-thinlto"
           echo "##################################################"
           # runner 只有 7GB RAM / 14GB 磁盘，MTK 全量树按默认配置必然爆。
           # 在这里直接改，避免还要单独上传 config.env。
@@ -220,6 +220,13 @@ jobs:
           # 本树合并后变成 =y 编进内核，而 entry.c 引用了树里未定义的
           # FREE_SESSION_HANDLE / session，是 WIP 未完成代码。按原厂形态关掉。
           echo '# CONFIG_MTK_TRUSTED_MEMORY_SUBSYSTEM is not set' >> arch/arm64/configs/vendor/matisse_gki_defconfig
+          # Full LTO 在 vmlinux 链接阶段把整个内核合并成单个 LLVM module，
+          # ld.lld 峰值内存超过 16G RAM + 12G swap，被 OOM killer 直接杀掉，
+          # 表现为日志停在 "LTO vmlinux"、连 Report build errors 都没跑。
+          # 改用 ThinLTO：CFI 同样工作（__cfi_slowpath 仍会生成），
+          # 符号 CRC 由声明决定、与 LTO 模式无关，不影响模块兼容性。
+          echo '# CONFIG_LTO_CLANG_FULL is not set' >> arch/arm64/configs/vendor/matisse_gki_defconfig
+          echo 'CONFIG_LTO_CLANG_THIN=y' >> arch/arm64/configs/vendor/matisse_gki_defconfig
           echo '# CONFIG_TEST_MTK_TRUSTED_MEMORY is not set' >> arch/arm64/configs/vendor/matisse_gki_defconfig
           echo '# CONFIG_TMEM_MEMORY_POOL_ALLOCATOR is not set' >> arch/arm64/configs/vendor/matisse_gki_defconfig
           # 原厂 /proc/config.gz 里没有 CONFIG_STACKPROTECTOR_PER_TASK，走的是全局 canary 路径。
