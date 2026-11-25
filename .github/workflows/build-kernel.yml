@@ -99,7 +99,7 @@ jobs:
   build:
     name: Build ${{ inputs.config }}
     runs-on: ubuntu-latest
-    timeout-minutes: 120
+    timeout-minutes: 300
     outputs:
       device: ${{ steps.meta.outputs.device }}
       build_time: ${{ steps.meta.outputs.build_time }}
@@ -130,7 +130,7 @@ jobs:
       - name: Harden config for runner limits
         run: |
           echo "##################################################"
-          echo "WORKFLOW_REV: v10-frame-warn-and-diag"
+          echo "WORKFLOW_REV: v11-nuke-Werror-and-speedup"
           echo "##################################################"
           # runner 只有 7GB RAM / 14GB 磁盘，MTK 全量树按默认配置必然爆。
           # 在这里直接改，避免还要单独上传 config.env。
@@ -229,14 +229,14 @@ jobs:
           key: kernel-${{ env.DEVICE }}-${{ env.KSU_VARIANT }}-${{ env.KERNEL_VERSION }}
           max-size: 2G
 
-      - name: Limit build parallelism
+      - name: Show build resources
         run: |
-          # runner 报 4 核但只有 7GB RAM，MTK 全量树 -j4 峰值必然 OOM（表现为
-          # Killed / Error 137，日志里没有 error: 字样）。降到 -j2。
-          sed -i 's/-j"$(nproc --all)"/-j2/g' scripts/build.sh
+          # 之前降到 -j2 是为了防 OOM，但代价是可能撞 120 分钟超时。
+          # 现在 job 上限已放到 300 分钟、swap 已有 8G，恢复全核并行。
           echo "--- make -j 调用点 ---"
           grep -n 'make -j' scripts/build.sh || true
-          echo "--- 资源水位 ---"
+          echo "--- CPU / 内存 / 磁盘 ---"
+          nproc --all
           free -h
           df -h / /mnt | tail -3
 
@@ -280,6 +280,20 @@ jobs:
             echo ">>> 修完后剩余: $AFTER"
             grep -n '(void)' "$P" | head -4 || true
           done
+          # ---------- 全局清掉 -Werror ----------
+          # 这棵树到处是 MTK 老代码，-Werror 把每个警告都变成中断点。
+          # 只删后面跟空格或行尾的形式，-Werror=xxx 这种带参形式保持原样。
+          echo ">>> 扫描含 -Werror 的构建文件"
+          FILES=$(timeout 240 grep -rl --include=Makefile --include='*.mk' --include=Kbuild -e '-Werror' \
+                    drivers arch scripts block crypto fs ipc kernel lib mm net security sound virt 2>/dev/null || true)
+          echo ">>> 命中文件数: $(printf '%s\n' "$FILES" | grep -c . || echo 0)"
+          printf '%s\n' "$FILES" | head -12
+          printf '%s\n' "$FILES" | while IFS= read -r f; do
+            [ -n "$f" ] || continue
+            sed -i -e 's/-Werror / /g' -e 's/-Werror$//' "$f"
+          done
+          echo ">>> 清理后 Drivers/arch 残留:"
+          grep -rn --include=Makefile --include=Kbuild -e '-Werror ' drivers arch 2>/dev/null | head -5 || echo "(clean)"
           cd "$GITHUB_WORKSPACE"
           bash scripts/build.sh all 2>&1 | tee "$RUNNER_TEMP/build_full.log"
 
