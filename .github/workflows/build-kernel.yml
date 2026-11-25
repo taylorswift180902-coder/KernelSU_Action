@@ -130,7 +130,7 @@ jobs:
       - name: Harden config for runner limits
         run: |
           echo "##################################################"
-          echo "WORKFLOW_REV: v6-fix-VFF_4G_SUPPORT"
+          echo "WORKFLOW_REV: v7-kill-Werror"
           echo "##################################################"
           # runner 只有 7GB RAM / 14GB 磁盘，MTK 全量树按默认配置必然爆。
           # 在这里直接改，避免还要单独上传 config.env。
@@ -204,6 +204,7 @@ jobs:
             arch/arm64/configs/vendor/matisse.config
           # 该驱动引用了树里未定义的 VFF_AG_SUPPORT，且手机日常用不到（仅调试串口）
           echo '# CONFIG_MTK_UART_APDMA is not set' >> arch/arm64/configs/vendor/matisse_gki_defconfig
+          echo '# CONFIG_WERROR is not set' >> arch/arm64/configs/vendor/matisse_gki_defconfig
           echo "merged defconfig: $(wc -l < arch/arm64/configs/vendor/matisse_gki_defconfig) lines"
           # build.sh 用 O=out 做树外编译，源码树里残留 .config / include/generated
           # 会被判定为 "source tree is not clean" 而直接失败，必须清干净。
@@ -256,6 +257,13 @@ jobs:
           if [ "$LEFT" != "0" ]; then echo ">>> 致命: 替换失败"; exit 1; fi
           echo ">>> 改后的三处:"
           grep -n 'VFF_ADDR2' "$F"
+          # Kbuild 的 KBUILD_CFLAGS += -Werror 追加在 KCFLAGS 之后，
+          # 会把传进去的 -Wno-error 覆盖掉，只能在 Makefile 层面摘掉。
+          echo ">>> 移除顶层 -Werror:"
+          grep -n 'Werror' Makefile | head -5
+          sed -i 's/KBUILD_CFLAGS += -Werror/KBUILD_CFLAGS +=/g' Makefile
+          echo ">>> 移除后:"
+          grep -c 'Werror' Makefile || true
           cd "$GITHUB_WORKSPACE"
           bash scripts/build.sh all 2>&1 | tee "$RUNNER_TEMP/build_full.log"
 
