@@ -130,7 +130,7 @@ jobs:
       - name: Harden config for runner limits
         run: |
           echo "##################################################"
-          echo "WORKFLOW_REV: v17-upload-symvers"
+          echo "WORKFLOW_REV: v18-global-stack-canary"
           echo "##################################################"
           # runner 只有 7GB RAM / 14GB 磁盘，MTK 全量树按默认配置必然爆。
           # 在这里直接改，避免还要单独上传 config.env。
@@ -222,6 +222,12 @@ jobs:
           echo '# CONFIG_MTK_TRUSTED_MEMORY_SUBSYSTEM is not set' >> arch/arm64/configs/vendor/matisse_gki_defconfig
           echo '# CONFIG_TEST_MTK_TRUSTED_MEMORY is not set' >> arch/arm64/configs/vendor/matisse_gki_defconfig
           echo '# CONFIG_TMEM_MEMORY_POOL_ALLOCATOR is not set' >> arch/arm64/configs/vendor/matisse_gki_defconfig
+          # 原厂 /proc/config.gz 里没有 CONFIG_STACKPROTECTOR_PER_TASK，走的是全局 canary 路径。
+          # 本树该项为 def_bool y（arm64 默认），canary 放进 task_struct，
+          # 导致全局 __stack_chk_guard 不定义，而 175 个 vendor 模块依赖它（期望 0x8f678b07）。
+          # arch/arm64/kernel/process.c 的条件是
+          #   #if defined(CONFIG_STACKPROTECTOR) && !defined(CONFIG_STACKPROTECTOR_PER_TASK)
+          # def_bool 没有 prompt，defconfig 改不动，必须在 Build kernel 里直接改 Kconfig。
           # 原厂 /proc/config.gz 里 =m 数量为 0：内核 Image 只含 built-in，
           # 225 个 vendor 模块由另一套配置单独编译、已存在于 vendor_dlkm。
           # 本树 matisse.config 把 panel/触摸/音频/指纹都标成 =m，编它们纯属浪费
@@ -285,6 +291,9 @@ jobs:
           grep -n 'VFF_ADDR2' "$F"
           # Kbuild 的 KBUILD_CFLAGS += -Werror 追加在 KCFLAGS 之后，
           # 会把传进去的 -Wno-error 覆盖掉，只能在 Makefile 层面摘掉。
+          echo ">>> 关闭 per-task stack canary:"
+          sed -i '/^config STACKPROTECTOR_PER_TASK/,/^config [A-Z]/ s/^[[:space:]]*def_bool y/\tdef_bool n/' arch/arm64/Kconfig
+          grep -A2 'config STACKPROTECTOR_PER_TASK' arch/arm64/Kconfig | head -4
           echo ">>> 顶层 Makefile 里的 Werror 行:"
           grep -nE '\-Werror' Makefile | head -12
           # 全部替换成 -Wno-error。
